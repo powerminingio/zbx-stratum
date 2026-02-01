@@ -20,8 +20,14 @@ zabbix_export:
         - macro: "{$STRATUM.EXTRA_ARGS}"
           value: ""
           description: "Extra flags string for script --extra, e.g. --tls --insecure --sni pool.example.com --user worker --passw x"
+
         - macro: "{$STRATUM.LATENCY.WARN_MS}"
-          value: "2000"
+          value: "1500"
+        - macro: "{$STRATUM.LATENCY.HIGH_MS}"
+          value: "3000"
+
+        - macro: "{$STRATUM.NODATA}"
+          value: "5m"
 
       items:
         - uuid: c04c7a69ae344996b7b39cd5aa71fa97
@@ -32,14 +38,14 @@ zabbix_export:
           value_type: UNSIGNED
           description: "1 if mining.subscribe succeeds, else 0"
           triggers:
-            - uuid: f5c2e8efd57b4f7d8f6aff62f5584041
+            - uuid: 6f9b0a4e0b964a7bb3c9d3c18a1b2c44
               name: "Stratum is down"
               expression: 'last(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}])=0'
               priority: HIGH
 
-            - uuid: 620e1316809540f58092e2aaeefb1e14
+            - uuid: 9c2b3d1a4b4d4f3d8a7c2e1d0f1a2b3c
               name: "No Stratum data"
-              expression: 'nodata(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],5m)=1'
+              expression: 'nodata(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],{$STRATUM.NODATA})=1'
               priority: AVERAGE
 
         - uuid: 2faea7c32cce495cab679f58d161626f
@@ -50,10 +56,15 @@ zabbix_export:
           units: ms
           value_type: UNSIGNED
           triggers:
-            - uuid: 762dceb7a8b846c283f89b50b42e2426
+            - uuid: 1a2b3c4d5e6f4a4b8c9d0e1f2a3b4c5d
               name: "Stratum latency is high"
-              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],5m)>{$STRATUM.LATENCY.WARN_MS}'
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],5m)>{$STRATUM.LATENCY.HIGH_MS}'
               priority: WARNING
+
+            - uuid: 7e8f9a0b1c2d4e5f8a9b0c1d2e3f4a5b
+              name: "Stratum latency is elevated"
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],5m)>{$STRATUM.LATENCY.WARN_MS}'
+              priority: INFO
 
         - uuid: 9708002a04fb41e1b75c69b7f250d99e
           name: "Stratum subscribe ok"
@@ -61,6 +72,11 @@ zabbix_export:
           key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
           delay: 1m
           value_type: UNSIGNED
+          triggers:
+            - uuid: 3b1c2d3e4f5a4b6c8d9e0f1a2b3c4d5e
+              name: "Stratum subscribe failed"
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],5m)=0'
+              priority: HIGH
 
         - uuid: 1d260dec96d0473a831920c8071029e9
           name: "Stratum notify seen"
@@ -68,6 +84,7 @@ zabbix_export:
           key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},notify_seen,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
           delay: 1m
           value_type: UNSIGNED
+          description: "Collected for visibility/debugging only (no trigger)"
 
         - uuid: d45421402137473ea0197af2c6e62e66
           name: "Stratum extranonce2 size"
