@@ -1,0 +1,78 @@
+zabbix_export:
+  version: "7.4"
+
+  template_groups:
+    - uuid: 4f41362963a542d692ce115de001d8a5
+      name: "Templates/Mining"
+
+  templates:
+    - uuid: 67670deae3744aaba0d9f3e4508bbf5e
+      template: "Template Stratum v1 Pool"
+      name: "Template Stratum v1 Pool"
+      groups:
+        - name: "Templates/Mining"
+
+      macros:
+        - macro: "{$STRATUM.PORT}"
+          value: "3333"
+        - macro: "{$STRATUM.TIMEOUT}"
+          value: "2"
+        - macro: "{$STRATUM.EXTRA_ARGS}"
+          value: ""
+          description: "Extra flags string for script --extra, e.g. --tls --insecure --sni pool.example.com --user worker --passw x"
+        - macro: "{$STRATUM.LATENCY.WARN_MS}"
+          value: "2000"
+
+      items:
+        - uuid: c04c7a69ae344996b7b39cd5aa71fa97
+          name: "Stratum alive"
+          type: EXTERNAL
+          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+          delay: 30s
+          value_type: UNSIGNED
+          description: "1 if mining.subscribe succeeds, else 0"
+          triggers:
+            - uuid: f5c2e8efd57b4f7d8f6aff62f5584041
+              name: "Stratum is down"
+              expression: 'last(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}])=0'
+              priority: HIGH
+
+            - uuid: 620e1316809540f58092e2aaeefb1e14
+              name: "No Stratum data"
+              expression: 'nodata(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],5m)=1'
+              priority: AVERAGE
+
+        - uuid: 2faea7c32cce495cab679f58d161626f
+          name: "Stratum latency (ms)"
+          type: EXTERNAL
+          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+          delay: 30s
+          units: ms
+          value_type: UNSIGNED
+          triggers:
+            - uuid: 762dceb7a8b846c283f89b50b42e2426
+              name: "Stratum latency is high"
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}],5m)>{$STRATUM.LATENCY.WARN_MS}'
+              priority: WARNING
+
+        - uuid: 9708002a04fb41e1b75c69b7f250d99e
+          name: "Stratum subscribe ok"
+          type: EXTERNAL
+          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+          delay: 1m
+          value_type: UNSIGNED
+
+        - uuid: 1d260dec96d0473a831920c8071029e9
+          name: "Stratum notify seen"
+          type: EXTERNAL
+          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},notify_seen,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+          delay: 1m
+          value_type: UNSIGNED
+
+        - uuid: d45421402137473ea0197af2c6e62e66
+          name: "Stratum extranonce2 size"
+          type: EXTERNAL
+          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},extranonce2_size,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+          delay: 5m
+          value_type: UNSIGNED
+
