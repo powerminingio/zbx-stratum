@@ -14,10 +14,6 @@ def send_req(sock, req_obj):
 
 
 def recv_line(sock, deadline_ts, pending=b""):
-    """
-    Receive a single newline-delimited JSON line.
-    Returns: (line_str, new_pending_bytes)
-    """
     buf = pending
     while True:
         if time.time() > deadline_ts:
@@ -25,7 +21,6 @@ def recv_line(sock, deadline_ts, pending=b""):
         if b"\n" in buf:
             line, rest = buf.split(b"\n", 1)
             return line.decode("utf-8", errors="replace"), rest
-
         chunk = sock.recv(4096)
         if not chunk:
             raise ConnectionError("connection closed by peer")
@@ -52,10 +47,8 @@ def connect(host, port, timeout, use_tls, sni=None, insecure=False):
 
 def parse_args_with_extra(argv):
     """
-    Zabbix External check passes key parameters as separate argv tokens, but macros like
-    {$STRATUM.EXTRA_ARGS} arrive as *one* token. We accept --extra "<string>" and split it.
-
-    We also support passing flags normally (without --extra).
+    Support Zabbix macro-friendly --extra "<flags>" which comes as a single token.
+    We split it with shlex and re-parse with a validating parser.
     """
     base = argparse.ArgumentParser(add_help=False)
     base.add_argument("host")
@@ -67,19 +60,16 @@ def parse_args_with_extra(argv):
     base.add_argument("--insecure", action="store_true")
     base.add_argument("--user", default=None)
     base.add_argument("--passw", default="x")
+    base.add_argument("--useragent", default="zabbix-stratum-check")
     base.add_argument("--extra", default="", help="Extra args as a single string (macro-friendly)")
-    # We don't validate metric here; we do later after re-parsing.
 
-    # First parse: keep unknowns so we don't break if extra flags appear
-    args1, unknown1 = base.parse_known_args(argv)
+    args1, _unknown1 = base.parse_known_args(argv)
 
-    # Build a second argv: original minus the --extra value, plus split(extra)
     extra_tokens = shlex.split(args1.extra) if args1.extra else []
 
-    # Remove --extra and its argument from argv (best-effort)
     cleaned = []
     skip_next = False
-    for i, tok in enumerate(argv):
+    for tok in argv:
         if skip_next:
             skip_next = False
             continue
@@ -90,7 +80,6 @@ def parse_args_with_extra(argv):
 
     merged = cleaned + extra_tokens
 
-    # Second parse with full validation
     p = argparse.ArgumentParser(description="Stratum v1 external check for Zabbix")
     p.add_argument("host")
     p.add_argument("port", type=int)
@@ -113,27 +102,17 @@ def parse_args_with_extra(argv):
     p.add_argument("--insecure", action="store_true", help="Disable TLS cert validation")
     p.add_argument("--user", default=None, help="Optional worker username for mining.authorize")
     p.add_argument("--passw", default="x", help="Optional worker password for mining.authorize (default: x)")
+    p.add_argument("--useragent", default="zabbix-stratum-check",
+                   help='User-Agent string used in mining.subscribe (e.g. "cpuminer")')
 
     return p.parse_args(merged)
-
-
-def zabbix_safe_print(metric, value_on_error="0"):
-    """
-    Always print something; Zabbix External check reads stdout.
-    """
-    try:
-        print(value_on_error if value_on_error is not None else "0")
-    except Exception:
-        # If stdout is broken, just exit
-        pass
 
 
 def main():
     try:
         args = parse_args_with_extra(sys.argv[1:])
     except Exception:
-        # If args fail, still return a Zabbix-safe value
-        zabbix_safe_print(metric=None, value_on_error="0")
+        print("0")
         sys.exit(0)
 
     start = time.time()
@@ -150,14 +129,13 @@ def main():
     try:
         sock = connect(args.host, args.port, args.timeout, args.tls, sni=args.sni, insecure=args.insecure)
 
-        # 1) mining.subscribe
-        send_req(sock, {"id": req_id, "method": "mining.subscribe", "params": ["zabbix-stratum-check/2.0"]})
+        # 1) mining.subscribe (User-Agent / client id is args.useragent)
+        send_req(sock, {"id": req_id, "method": "mining.subscribe", "params": [args.useragent]})
         req_id += 1
 
         line, pending = recv_line(sock, deadline, pending=b"")
         resp = json.loads(line)
 
-        # Typical: {"id":1,"result":[[...], "extranonce1", extranonce2_size],"error":null}
         if resp.get("error") is None and resp.get("result"):
             subscribe_ok = 1
             try:
@@ -178,36 +156,34 @@ def main():
             if resp2.get("error") is None and resp2.get("result") is True:
                 authorize_ok = 1
 
-        # 3) Look briefly for mining.notify (some pools only send after authorize)
-        look_deadline = min(deadline, time.time() + 0.8)
-        leftover = pending
+        # 3) Only wait for mining.notify when requested
+        if args.metric == "notify_seen":
+            look_deadline = min(deadline, time.time() + 0.8)
+            leftover = pending
 
-        while time.time() < look_deadline:
-            # Consume leftover lines first
-            if b"\n" in leftover:
-                l3, leftover = leftover.split(b"\n", 1)
+            while time.time() < look_deadline:
+                if b"\n" in leftover:
+                    l3, leftover = leftover.split(b"\n", 1)
+                    try:
+                        msg = json.loads(l3.decode("utf-8", errors="replace"))
+                        if msg.get("method") == "mining.notify":
+                            notify_seen = 1
+                            break
+                    except Exception:
+                        pass
+                    continue
+
                 try:
-                    msg = json.loads(l3.decode("utf-8", errors="replace"))
-                    if msg.get("method") == "mining.notify":
-                        notify_seen = 1
+                    chunk = sock.recv(4096)
+                    if not chunk:
                         break
-                except Exception:
-                    pass
-                continue
-
-            try:
-                chunk = sock.recv(4096)
-                if not chunk:
+                    leftover += chunk
+                except socket.timeout:
                     break
-                leftover += chunk
-            except socket.timeout:
-                break
 
         latency_ms = int(round((time.time() - start) * 1000.0))
 
-        # Output metric
         if args.metric == "alive":
-            # Alive = subscribe succeeded
             print("1" if subscribe_ok == 1 else "0")
         elif args.metric == "latency_ms":
             print(str(latency_ms))
@@ -232,11 +208,7 @@ def main():
             pass
 
     except Exception:
-        # Zabbix-friendly failure: output a value and exit 0
-        if args.metric == "latency_ms":
-            print("0")
-        else:
-            print("0")
+        print("0")
         sys.exit(0)
 
 
