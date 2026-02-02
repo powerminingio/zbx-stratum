@@ -93,3 +93,21 @@ zabbix_export:
           delay: 5m
           value_type: UNSIGNED
 
+  graphs:
+    - uuid: 9d2c3b4a5f6e4d1a8b2c3d4e5f6a7b8c
+      name: "Stratum status + latency"
+      graph_items:
+        - color: 00AA00
+          item:
+            host: "Template Stratum v1 Pool"
+            key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+        - color: FF9900
+          item:
+            host: "Template Stratum v1 Pool"
+            key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+        - color: 0066FF
+          yaxisside: RIGHT
+          item:
+            host: "Template Stratum v1 Pool"
+            key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--extra,{$STRATUM.EXTRA_ARGS}]'
+
