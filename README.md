@@ -1,242 +1,247 @@
 # Stratum v1 Pool Monitoring for Zabbix
 
 This repository provides a **Stratum v1 monitoring solution for Zabbix
-7.4** to check the health and performance of a Bitcoin mining pool using
-the Stratum protocol itself.
+7.4+** to monitor Bitcoin mining pools using the native Stratum
+protocol.
 
-It uses a **Python external check** that speaks Stratum v1
-(`mining.subscribe`, optional `mining.authorize`) and a **Zabbix
-template** with items, triggers, and graphs.
+It supports:
 
-------------------------------------------------------------------------
-
-## Features
-
--   Native **Stratum v1 protocol check** (no pool-specific APIs)
--   Works with **plain TCP or TLS**
--   Configurable **user agent** (e.g. `cpuminer`)
--   Measures:
-    -   Pool availability (`mining.subscribe`)
-    -   Subscribe success
-    -   Latency
-    -   Notify visibility (for debugging)
-    -   Extranonce size
--   Production-safe triggers (low noise)
--   Combined graph: **status + latency**
--   Fully compatible with **Zabbix 7.4 YAML import**
+-   Plain TCP and TLS
+-   Multiple ports on the same host (LLD discovery)
+-   Per-port TLS / SNI configuration
+-   Configurable user-agent (e.g. `cpuminer`)
+-   Production-safe triggers and graphs
 
 ------------------------------------------------------------------------
 
-## Requirements
+# Architecture
 
--   Zabbix **Server or Proxy** 7.4+
--   Python **3.6+**
--   Network access from Zabbix server/proxy to the pool endpoint
--   Script executed as **External check**
+This solution consists of:
 
-------------------------------------------------------------------------
-
-## Files
-
--   `stratum_v1.py` -- Python external check script
--   `Template_Stratum_v1_Pool.yaml` -- Zabbix 7.4 template (items,
-    triggers, graph)
+-   `stratum_v1.py` -- Main Stratum external check
+-   `stratum_ports_discovery.py` -- Port discovery helper (LLD)
+-   `Template_Stratum_v1_Pool.yaml` -- Zabbix 7.4 template (multi-port)
 
 ------------------------------------------------------------------------
 
-## Installation
+# Requirements
 
-### 1) Install the script
+-   Zabbix Server or Proxy 7.4+
+-   Python 3.6+
+-   Network access from server/proxy to pool
+-   External checks enabled
 
-Place the script on the **Zabbix server or proxy**:
+------------------------------------------------------------------------
+
+# Installation
+
+## 1️⃣ Install Scripts
+
+Determine your ExternalScripts directory:
+
+``` bash
+grep ^ExternalScripts /etc/zabbix/zabbix_server.conf
+```
+
+If not set, default is usually:
+
+    /usr/lib/zabbix/externalscripts
+
+You may alternatively set:
+
+    ExternalScripts=/etc/zabbix/scripts
+
+### Copy both scripts:
 
 ``` bash
 mkdir -p /etc/zabbix/scripts
-cp stratum_v1.py /etc/zabbix/scripts/stratum_v1.py
+
+cp stratum_v1.py /etc/zabbix/scripts/
+cp stratum_ports_discovery.py /etc/zabbix/scripts/
+
 chmod +x /etc/zabbix/scripts/stratum_v1.py
+chmod +x /etc/zabbix/scripts/stratum_ports_discovery.py
 ```
 
-Either:
+If using default directory instead:
 
-**Option A (recommended):** point Zabbix to this directory\
-Edit `/etc/zabbix/zabbix_server.conf` (or `zabbix_proxy.conf`):
-
-``` conf
-ExternalScripts=/etc/zabbix/scripts
-Timeout=10
+``` bash
+cp stratum_v1.py /usr/lib/zabbix/externalscripts/
+cp stratum_ports_discovery.py /usr/lib/zabbix/externalscripts/
+chmod +x /usr/lib/zabbix/externalscripts/*.py
 ```
 
-Restart:
+Restart Zabbix:
 
 ``` bash
 systemctl restart zabbix-server
-# or zabbix-proxy
 ```
 
-**Option B:** symlink into existing ExternalScripts directory:
-
-``` bash
-ln -s /etc/zabbix/scripts/stratum_v1.py /usr/lib/zabbix/externalscripts/stratum_v1.py
-```
+(or `zabbix-proxy`)
 
 ------------------------------------------------------------------------
 
-### 2) Test manually (important)
+## 2️⃣ Test Scripts Manually
 
-Run as the `zabbix` user from the server/proxy:
+Always test as the `zabbix` user.
+
+### Test discovery script
 
 ``` bash
-sudo -u zabbix /etc/zabbix/scripts/stratum_v1.py pool.example.com 3333 alive --timeout 2
+sudo -u zabbix stratum_ports_discovery.py "3333,443"
+```
+
+Expected output:
+
+``` json
+{"data":[{"{#STRATUM.PORT}":"3333"},{"{#STRATUM.PORT}":"443"}]}
+```
+
+### Test Stratum check
+
+``` bash
+sudo -u zabbix stratum_v1.py pool.example.com 3333 alive --timeout 2
 ```
 
 Expected output:
 
     1
 
-Latency test:
-
-``` bash
-sudo -u zabbix /etc/zabbix/scripts/stratum_v1.py pool.example.com 3333 latency_ms --timeout 2
-```
-
 ------------------------------------------------------------------------
 
-### 3) Import the template
+# Template Import
 
-In Zabbix UI:
+Import:
+
+    Template_Stratum_v1_Pool.yaml
+
+Zabbix UI:
 
     Configuration → Templates → Import
 
-Import `Template_Stratum_v1_Pool.yaml`.
+------------------------------------------------------------------------
+
+# Host Configuration
+
+1.  Create a host representing the pool IP/DNS.
+2.  Set Host Interface to pool address (used by `{HOST.CONN}`).
+3.  Link template: **Template Stratum v1 Pool**
 
 ------------------------------------------------------------------------
 
-### 4) Link template to a host
+# Multi-Port Configuration (LLD)
 
--   Create or select a host representing the **pool endpoint**
--   Set **Host interface** to the pool IP or DNS name
--   Link template: **Template Stratum v1 Pool**
+Instead of one port, you now configure:
 
-------------------------------------------------------------------------
+    {$STRATUM.PORTS}
 
-## Configuration (Macros)
+Example:
 
-All behavior is controlled via template/host macros.
+    3333,4333,443
 
-### Required
-
-  Macro                  Description                Example
-  ---------------------- -------------------------- ---------
-  `{$STRATUM.PORT}`      Stratum port               `3333`
-  `{$STRATUM.TIMEOUT}`   Script timeout (seconds)   `2`
-
-> ⚠️ Keep this **lower** than Zabbix `Timeout` (e.g. 2 vs 10).
+The template automatically creates items, triggers and graphs per port.
 
 ------------------------------------------------------------------------
 
-### Optional (TLS, auth, etc.)
+# Per-Port TLS Configuration
 
-  -------------------------------------------------------------------------------------------
-  Macro                     Description                      Example
-  ------------------------- -------------------------------- --------------------------------
-  `{$STRATUM.EXTRA_ARGS}`   Extra CLI flags                  `--tls --sni pool.example.com`
+You can configure TLS only for specific ports using macro context.
 
-  `{$STRATUM.USERAGENT}`    Stratum user agent               `cpuminer`
-  -------------------------------------------------------------------------------------------
+Example:
 
-Examples:
+    {$STRATUM.EXTRA_ARGS:"3333"} =
+    {$STRATUM.EXTRA_ARGS:"443"} = --tls --sni pool.example.com
 
-**TLS pool**
+You can also override user-agent per port:
 
-    {$STRATUM.EXTRA_ARGS} = --tls
-
-**TLS with SNI**
-
-    {$STRATUM.EXTRA_ARGS} = --tls --sni pool.example.com
-
-**Authorize (if pool requires it)**
-
-    {$STRATUM.EXTRA_ARGS} = --user workername --passw x
+    {$STRATUM.USERAGENT:"443"} = cpuminer
 
 ------------------------------------------------------------------------
 
-### User Agent (cpuminer spoofing)
+# Main Macros
 
-The script sends this value in `mining.subscribe`:
+  Macro                          Description
+  ------------------------------ --------------------------------
+  `{$STRATUM.PORTS}`             Comma-separated ports
+  `{$STRATUM.TIMEOUT}`           Script timeout (default 2)
+  `{$STRATUM.USERAGENT}`         mining.subscribe client string
+  `{$STRATUM.EXTRA_ARGS}`        Extra CLI flags
+  `{$STRATUM.LATENCY.WARN_MS}`   Latency warning threshold
+  `{$STRATUM.LATENCY.HIGH_MS}`   Latency high threshold
+  `{$STRATUM.NODATA}`            No-data period
 
-    {$STRATUM.USERAGENT} = cpuminer
+⚠️ Keep `{$STRATUM.TIMEOUT}` lower than Zabbix `Timeout=` in config.
 
-You may also use:
+Recommended:
 
-    cpuminer/2.5.1
-
-Many pools log or expose this value in stats.
-
-------------------------------------------------------------------------
-
-## Items Collected
-
-  Item                       Description
-  -------------------------- --------------------------------------
-  Stratum alive              1 if `mining.subscribe` succeeds
-  Stratum subscribe ok       Explicit subscribe success
-  Stratum latency (ms)       End-to-end handshake latency
-  Stratum notify seen        Whether `mining.notify` was observed
-  Stratum extranonce2 size   Protocol sanity check
+    Timeout=10
+    {$STRATUM.TIMEOUT}=2
 
 ------------------------------------------------------------------------
 
-## Triggers
+# Items Created Per Port
 
-### Availability
+For each discovered port:
 
--   **Stratum is down (\>30s)** -- HIGH\
--   **No Stratum data** -- AVERAGE
-
-### Protocol / performance
-
--   **Stratum subscribe failed** -- HIGH
--   **Stratum latency is high** -- WARNING
--   **Stratum latency is elevated** -- INFO
+-   Stratum alive
+-   Stratum subscribe ok
+-   Stratum latency (ms)
+-   Stratum notify seen
+-   Stratum extranonce2 size
 
 ------------------------------------------------------------------------
 
-## Graphs
+# Triggers Per Port
 
-### "Stratum status + latency"
-
-Single graph combining: - **Stratum alive** (0/1) - **Stratum subscribe
-ok** (0/1) - **Stratum latency** (ms, right axis)
-
-------------------------------------------------------------------------
-
-## Troubleshooting
-
-### External check timeout in logs
-
-    Timeout while executing a shell script
-
-Fix: - Set `Timeout=10` in `zabbix_server.conf` - Set
-`{$STRATUM.TIMEOUT}=2`
+-   Stratum is down (\>30s)
+-   No Stratum data
+-   Stratum subscribe failed
+-   Stratum latency high
+-   Stratum latency elevated
 
 ------------------------------------------------------------------------
 
-### Works in CLI but not in Zabbix
+# Graph Per Port
 
-Common causes: - Script not in `ExternalScripts` - Wrong permissions -
-Zabbix timeout too low - Pool requires TLS or SNI
+Each port gets:
 
-Always test as:
+**Stratum status + latency**
 
-``` bash
-sudo -u zabbix stratum_v1.py ...
-```
+-   Alive (0/1)
+-   Subscribe ok (0/1)
+-   Latency (ms, right axis)
 
 ------------------------------------------------------------------------
 
-## Notes / Limitations
+# Troubleshooting
 
--   This is **not mining** --- no shares are submitted.
--   No persistent connection; each check is a short handshake.
--   Some pools only send `mining.notify` after authorize or job timing.
--   Designed for **pool health**, not miner accounting.
+## Timeout while executing shell script
+
+Increase:
+
+    Timeout=10
+
+And ensure:
+
+    {$STRATUM.TIMEOUT}=2
+
+------------------------------------------------------------------------
+
+## Works in CLI but not in Zabbix
+
+Check:
+
+-   Script location matches `ExternalScripts=`
+-   Script executable
+-   SELinux/AppArmor
+-   Testing with correct TLS flags
+-   Running test as `zabbix` user
+
+------------------------------------------------------------------------
+
+# Important Notes
+
+-   This does NOT mine.
+-   It performs a short handshake only.
+-   No shares are submitted.
+-   Designed for availability & protocol monitoring.

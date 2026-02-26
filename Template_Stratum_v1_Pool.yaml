@@ -13,104 +13,117 @@ zabbix_export:
         - name: "Templates/Mining"
 
       macros:
-        - macro: "{$STRATUM.PORT}"
+        - macro: "{$STRATUM.PORTS}"
           value: "3333"
+          description: "Comma-separated list of Stratum ports to monitor on this host."
         - macro: "{$STRATUM.TIMEOUT}"
           value: "2"
         - macro: "{$STRATUM.EXTRA_ARGS}"
           value: ""
-          description: "Extra flags string for script --extra, e.g. --tls --insecure --sni pool.example.com --user worker --passw x"
+          description: |
+            Extra flags string for script --extra.
+            Prefer context macros per port, e.g. {$STRATUM.EXTRA_ARGS:"4333"} = --tls --sni pool.example.com
         - macro: "{$STRATUM.USERAGENT}"
-          value: "zabbix-stratum-check"
-          description: "Value sent as mining.subscribe client/user agent"
+          value: "cpuminer"
+          description: |
+            Value sent as mining.subscribe client/user agent.
+            Prefer context macros per port if needed, e.g. {$STRATUM.USERAGENT:"4333"} = cpuminer
 
         - macro: "{$STRATUM.LATENCY.WARN_MS}"
           value: "1500"
         - macro: "{$STRATUM.LATENCY.HIGH_MS}"
           value: "3000"
-
         - macro: "{$STRATUM.NODATA}"
           value: "5m"
 
-      items:
-        - uuid: c04c7a69ae344996b7b39cd5aa71fa97
-          name: "Stratum alive"
+      discovery_rules:
+        - uuid: 2a5bb7a0343d41fca65d4c1aa305b653
+          name: "Discover Stratum ports"
           type: EXTERNAL
-          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-          delay: 30s
-          value_type: UNSIGNED
-          description: "1 if mining.subscribe succeeds, else 0"
-          triggers:
-            - uuid: 6f9b0a4e0b964a7bb3c9d3c18a1b2c44
-              name: "Stratum is down (>180s)"
-              expression: 'max(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}],180s)=0'
+          key: 'stratum_ports_discovery.py[{$STRATUM.PORTS}]'
+          delay: 1h
+          lifetime: 7d
+          description: "Discovers Stratum ports from {$STRATUM.PORTS} macro and creates per-port items/triggers/graphs."
+
+          item_prototypes:
+            - uuid: cd77a24765c74dc4bdea9b8e9771939c
+              name: 'Stratum alive (port {#STRATUM.PORT})'
+              type: EXTERNAL
+              key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
+              delay: 30s
+              value_type: UNSIGNED
+              description: "1 if mining.subscribe succeeds, else 0"
+
+            - uuid: 227ea64f324248839432e2c5d02066e5
+              name: 'Stratum latency (ms) (port {#STRATUM.PORT})'
+              type: EXTERNAL
+              key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
+              delay: 30s
+              units: ms
+              value_type: UNSIGNED
+
+            - uuid: 197b3032da25479abf95dc3478341117
+              name: 'Stratum subscribe ok (port {#STRATUM.PORT})'
+              type: EXTERNAL
+              key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
+              delay: 1m
+              value_type: UNSIGNED
+
+            - uuid: 73d6649c861d4cde93854bc656a7ea7e
+              name: 'Stratum notify seen (port {#STRATUM.PORT})'
+              type: EXTERNAL
+              key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},notify_seen,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
+              delay: 1m
+              value_type: UNSIGNED
+              description: "Collected for visibility/debugging only (no trigger)."
+
+            - uuid: 9171e16b951e4cb5bfdf823dc69ad47f
+              name: 'Stratum extranonce2 size (port {#STRATUM.PORT})'
+              type: EXTERNAL
+              key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},extranonce2_size,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
+              delay: 5m
+              value_type: UNSIGNED
+
+          trigger_prototypes:
+            - uuid: fd236afd0a0a49c7af0f132c61e1d80f
+              name: 'Stratum is down (>30s) (port {#STRATUM.PORT})'
+              expression: 'max(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}],30s)=0'
               priority: HIGH
 
-            - uuid: 9c2b3d1a4b4d4f3d8a7c2e1d0f1a2b3c
-              name: "No Stratum data"
-              expression: 'nodata(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}],{$STRATUM.NODATA})=1'
+            - uuid: c6241951b01a438f95fe4f5ebbef4c81
+              name: 'No Stratum data (port {#STRATUM.PORT})'
+              expression: 'nodata(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}],{$STRATUM.NODATA})=1'
               priority: AVERAGE
 
-        - uuid: 2faea7c32cce495cab679f58d161626f
-          name: "Stratum latency (ms)"
-          type: EXTERNAL
-          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-          delay: 30s
-          units: ms
-          value_type: UNSIGNED
-          triggers:
-            - uuid: 1a2b3c4d5e6f4a4b8c9d0e1f2a3b4c5d
-              name: "Stratum latency is high"
-              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}],5m)>{$STRATUM.LATENCY.HIGH_MS}'
-              priority: WARNING
-
-            - uuid: 7e8f9a0b1c2d4e5f8a9b0c1d2e3f4a5b
-              name: "Stratum latency is elevated"
-              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}],5m)>{$STRATUM.LATENCY.WARN_MS}'
-              priority: INFO
-
-        - uuid: 9708002a04fb41e1b75c69b7f250d99e
-          name: "Stratum subscribe ok"
-          type: EXTERNAL
-          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-          delay: 1m
-          value_type: UNSIGNED
-          triggers:
-            - uuid: 3b1c2d3e4f5a4b6c8d9e0f1a2b3c4d5e
-              name: "Stratum subscribe failed"
-              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}],5m)=0'
+            - uuid: 90d649043ec04172b726d93dfa5f04c3
+              name: 'Stratum subscribe failed (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}],5m)=0'
               priority: HIGH
 
-        - uuid: 1d260dec96d0473a831920c8071029e9
-          name: "Stratum notify seen"
-          type: EXTERNAL
-          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},notify_seen,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-          delay: 1m
-          value_type: UNSIGNED
-          description: "Collected for visibility/debugging only (no trigger)"
+            - uuid: f0ae02e6e0244a94b8e9a8371c8d8a76
+              name: 'Stratum latency is high (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}],5m)>{$STRATUM.LATENCY.HIGH_MS}'
+              priority: WARNING
 
-        - uuid: d45421402137473ea0197af2c6e62e66
-          name: "Stratum extranonce2 size"
-          type: EXTERNAL
-          key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},extranonce2_size,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-          delay: 5m
-          value_type: UNSIGNED
+            - uuid: e42e087cf0894ded997a61d2b12e9c18
+              name: 'Stratum latency is elevated (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}],5m)>{$STRATUM.LATENCY.WARN_MS}'
+              priority: INFO
 
-  graphs:
-    - uuid: 9d2c3b4a5f6e4d1a8b2c3d4e5f6a7b8c
-      name: "Stratum status + latency"
-      graph_items:
-        - color: 00AA00
-          item:
-            host: "Template Stratum v1 Pool"
-            key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-        - color: FF9900
-          item:
-            host: "Template Stratum v1 Pool"
-            key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-        - color: 0066FF
-          yaxisside: RIGHT
-          item:
-            host: "Template Stratum v1 Pool"
-            key: 'stratum_v1.py[{HOST.CONN},{$STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT},--extra,{$STRATUM.EXTRA_ARGS}]'
-
+          graph_prototypes:
+            - uuid: 3346580da1ef4e3489044f9be902d05d
+              name: 'Stratum status + latency (port {#STRATUM.PORT})'
+              graph_items:
+                - color: 00AA00
+                  item:
+                    host: "Template Stratum v1 Pool"
+                    key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
+                - color: FF9900
+                  item:
+                    host: "Template Stratum v1 Pool"
+                    key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},subscribe_ok,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
+                - color: 0066FF
+                  yaxisside: RIGHT
+                  item:
+                    host: "Template Stratum v1 Pool"
+                    key: 'stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},latency_ms,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}]'
