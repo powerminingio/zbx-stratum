@@ -17,7 +17,7 @@ zabbix_export:
           value: "3333"
           description: "Comma-separated list of Stratum ports to monitor on this host."
         - macro: "{$STRATUM.TIMEOUT}"
-          value: "2"
+          value: "3"
         - macro: "{$STRATUM.EXTRA_ARGS}"
           value: ""
           description: |
@@ -87,7 +87,7 @@ zabbix_export:
           trigger_prototypes:
             - uuid: fd236afd0a0a49c7af0f132c61e1d80f
               name: 'Stratum is down (>30s) (port {#STRATUM.PORT})'
-              expression: 'max(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}],30s)=0'
+              expression: 'min(/Template Stratum v1 Pool/stratum_v1.py[{HOST.CONN},{#STRATUM.PORT},alive,--timeout,{$STRATUM.TIMEOUT},--useragent,{$STRATUM.USERAGENT:"{#STRATUM.PORT}"} ,--extra,{$STRATUM.EXTRA_ARGS:"{#STRATUM.PORT}"}],2m)=0'
               priority: HIGH
 
             - uuid: c6241951b01a438f95fe4f5ebbef4c81
