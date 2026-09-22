@@ -1,0 +1,200 @@
+zabbix_export:
+  version: '7.4'
+  template_groups:
+    - uuid: 4f41362963a542d692ce115de001d8a5
+      name: Templates/Mining
+  templates:
+    - uuid: 23d771a880e54f5b9a6cf19af4bbf922
+      template: 'Template Stratum v2 Pool'
+      name: 'Template Stratum v2 Pool'
+      groups:
+        - name: Templates/Mining
+      macros:
+        - macro: '{$STRATUMV2.PORTS}'
+          value: '23330'
+          description: 'Comma-separated Stratum V2 ports.'
+        - macro: '{$STRATUMV2.TIMEOUT}'
+          value: '3'
+        - macro: '{$STRATUMV2.USER_IDENTITY}'
+          value: 'zabbix'
+          description: 'SV2 user_identity used when opening the monitoring Standard Channel.'
+        - macro: '{$STRATUMV2.HASHRATE}'
+          value: '1000000000000'
+          description: 'Nominal probe hashrate in H/s (default 1 TH/s).'
+        - macro: '{$STRATUMV2.AUTHORITY_KEY}'
+          value: ''
+          description: 'Optional pool authority key in Stratum V2 Base58Check form (not 64-character hex). Use context macros per port if needed.'
+        - macro: '{$STRATUMV2.LATENCY.WARN_MS}'
+          value: '1500'
+        - macro: '{$STRATUMV2.LATENCY.HIGH_MS}'
+          value: '3000'
+        - macro: '{$STRATUMV2.NODATA}'
+          value: '5m'
+      discovery_rules:
+        - uuid: bfc15bb3d6cc457da9a7bbedeb791244
+          name: 'Discover Stratum V2 ports'
+          type: EXTERNAL
+          key: 'stratum_ports_discovery.py[{$STRATUMV2.PORTS}]'
+          delay: 1h
+          lifetime: 7d
+          item_prototypes:
+            - uuid: 889f52c22f96441e93d9c57c70858189
+              name: 'Stratum V2 probe JSON (port {#STRATUM.PORT})'
+              type: EXTERNAL
+              key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              delay: 30s
+              value_type: TEXT
+              history: 1d
+              description: 'One SV2 connection performs TCP, Noise, SetupConnection and OpenStandardMiningChannel. All other metrics are dependent items.'
+            - uuid: 7eff015418d2413994659811792d453c
+              name: 'Stratum V2 alive (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.alive[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.alive']
+            - uuid: 675376df2a774565b3d0e24ef4d94087
+              name: 'Stratum V2 TCP OK (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.tcp_ok[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.tcp_ok']
+            - uuid: d1d8418e66bf410f8d53c16300b9051c
+              name: 'Stratum V2 Noise OK (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.noise_ok[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.noise_ok']
+            - uuid: 3167947374684a60887a55335435cde2
+              name: 'Stratum V2 SetupConnection OK (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.setup_ok[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.setup_ok']
+            - uuid: 33b85a3cc0ed4db7b00817d8866e2902
+              name: 'Stratum V2 channel OK (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.channel_ok[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.channel_ok']
+            - uuid: 078fa72250bf450cae9a2d6b98d4f03f
+              name: 'Stratum V2 latency (ms) (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.latency_ms[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              units: ms
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.latency_ms']
+            - uuid: aebf6e1502f943709482c7dfdf4ffab1
+              name: 'Stratum V2 job seen (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.job_seen[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.job_seen']
+            - uuid: e20acdcf22e1478ba6b953bde1b9af9e
+              name: 'Stratum V2 SetNewPrevHash seen (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.prevhash_seen[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.prevhash_seen']
+            - uuid: 55ff31f1bcee4620b9cc46e542e87ca4
+              name: 'Stratum V2 used version (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.used_version[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.used_version']
+            - uuid: 18229ff9ca214d4597488b0fd0d89913
+              name: 'Stratum V2 authority verified (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.authority_verified[{#STRATUM.PORT}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.authority_verified']
+            - uuid: 9b09f25748b04455827c26a578d78eed
+              name: 'Stratum V2 error stage (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.error_stage[{#STRATUM.PORT}]'
+              value_type: TEXT
+              history: 7d
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.error_stage']
+            - uuid: 5545e85fd033456e93971a92c93577c1
+              name: 'Stratum V2 error code (port {#STRATUM.PORT})'
+              type: DEPENDENT
+              key: 'stratumv2.error_code[{#STRATUM.PORT}]'
+              value_type: TEXT
+              history: 7d
+              master_item:
+                key: 'stratum_v2_probe[{HOST.CONN},{#STRATUM.PORT},--timeout,{$STRATUMV2.TIMEOUT},--user,{$STRATUMV2.USER_IDENTITY:"{#STRATUM.PORT}"},--hashrate,{$STRATUMV2.HASHRATE:"{#STRATUM.PORT}"},--authority-key,{$STRATUMV2.AUTHORITY_KEY:"{#STRATUM.PORT}"}]'
+              preprocessing:
+                - type: JSONPATH
+                  parameters: ['$.error_code']
+          trigger_prototypes:
+            - uuid: 33380165de414a8d8dd66fc8ba7499f4
+              name: 'Stratum V2 is down (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v2 Pool/stratumv2.alive[{#STRATUM.PORT}],2m)=0'
+              priority: HIGH
+            - uuid: 6624cbf3817543568ad34b9aa16f4490
+              name: 'No Stratum V2 data (port {#STRATUM.PORT})'
+              expression: 'nodata(/Template Stratum v2 Pool/stratumv2.alive[{#STRATUM.PORT}],{$STRATUMV2.NODATA})=1'
+              priority: AVERAGE
+            - uuid: b6c589fe4c2745769ef80bbd0af19826
+              name: 'Stratum V2 TCP works but Noise handshake fails (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v2 Pool/stratumv2.tcp_ok[{#STRATUM.PORT}],2m)=1 and max(/Template Stratum v2 Pool/stratumv2.noise_ok[{#STRATUM.PORT}],2m)=0'
+              priority: HIGH
+            - uuid: e40f876263164502a52124044a777264
+              name: 'Stratum V2 SetupConnection fails (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v2 Pool/stratumv2.noise_ok[{#STRATUM.PORT}],2m)=1 and max(/Template Stratum v2 Pool/stratumv2.setup_ok[{#STRATUM.PORT}],2m)=0'
+              priority: HIGH
+            - uuid: 74c06df4b9b14a8086088741dbb5e52a
+              name: 'Stratum V2 mining channel cannot be opened (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v2 Pool/stratumv2.setup_ok[{#STRATUM.PORT}],2m)=1 and max(/Template Stratum v2 Pool/stratumv2.channel_ok[{#STRATUM.PORT}],2m)=0'
+              priority: HIGH
+            - uuid: b06d2be6d3bc49008e3c4f879c205bee
+              name: 'Stratum V2 latency is high (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v2 Pool/stratumv2.latency_ms[{#STRATUM.PORT}],5m)>{$STRATUMV2.LATENCY.HIGH_MS}'
+              priority: WARNING
+            - uuid: d2033dc79a02420fb251e8cc409331aa
+              name: 'Stratum V2 latency is elevated (port {#STRATUM.PORT})'
+              expression: 'min(/Template Stratum v2 Pool/stratumv2.latency_ms[{#STRATUM.PORT}],5m)>{$STRATUMV2.LATENCY.WARN_MS}'
+              priority: INFO
