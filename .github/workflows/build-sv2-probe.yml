@@ -1,0 +1,105 @@
+name: Build Stratum V2 probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'sv2-probe/**'
+      - 'bin/stratum_v2_probe-linux-x86_64-musl'
+      - 'bin/stratum_v2_probe-linux-x86_64-musl.sha256'
+      - '.github/workflows/build-sv2-probe.yml'
+  pull_request:
+    paths:
+      - 'sv2-probe/**'
+      - 'bin/stratum_v2_probe-linux-x86_64-musl'
+      - 'bin/stratum_v2_probe-linux-x86_64-musl.sha256'
+      - '.github/workflows/build-sv2-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-x86_64-musl:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust target and musl tools
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y musl-tools file
+
+      - name: Build static release binary
+        working-directory: sv2-probe
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
+        run: |
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+
+      - name: Verify static binary
+        run: |
+          BIN=sv2-probe/target/x86_64-unknown-linux-musl/release/stratum_v2_probe
+
+          file "$BIN"
+
+          if ldd "$BIN" 2>&1 | grep -qvE 'not a dynamic executable|statically linked'; then
+            echo 'Binary appears dynamically linked:'
+            ldd "$BIN" || true
+            exit 1
+          fi
+
+          "$BIN" --version
+
+      - name: Stage build artifact
+        run: |
+          mkdir -p dist
+
+          cp sv2-probe/target/x86_64-unknown-linux-musl/release/stratum_v2_probe \
+             dist/stratum_v2_probe-linux-x86_64-musl
+
+          chmod 0755 dist/stratum_v2_probe-linux-x86_64-musl
+
+          cd dist
+          sha256sum stratum_v2_probe-linux-x86_64-musl \
+            > stratum_v2_probe-linux-x86_64-musl.sha256
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stratum-v2-probe-linux-x86_64-musl
+          path: |
+            dist/stratum_v2_probe-linux-x86_64-musl
+            dist/stratum_v2_probe-linux-x86_64-musl.sha256
+
+      - name: Validate checked-in binary
+        run: |
+          BUILT=dist/stratum_v2_probe-linux-x86_64-musl
+          CHECKED=bin/stratum_v2_probe-linux-x86_64-musl
+
+          if [ ! -f "$CHECKED" ]; then
+            echo "::error::Checked-in binary is missing: $CHECKED"
+            exit 1
+          fi
+
+          if ! cmp -s "$BUILT" "$CHECKED"; then
+            echo "::error::Checked-in binary does not match the binary built from this source."
+
+            echo "Built binary:"
+            sha256sum "$BUILT"
+
+            echo "Checked-in binary:"
+            sha256sum "$CHECKED"
+
+            echo
+            echo "Download the artifact from this workflow run and replace:"
+            echo "  $CHECKED"
+
+            exit 1
+          fi
+
+      - name: Validate checked-in checksum
+        working-directory: bin
+        run: |
+          sha256sum -c stratum_v2_probe-linux-x86_64-musl.sha256
