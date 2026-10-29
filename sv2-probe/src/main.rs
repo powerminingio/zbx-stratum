@@ -6,7 +6,7 @@ use std::{
 };
 use stratum_apps::stratum_core::{
     binary_sv2::{Deserialize, Str0255, U256},
-    codec_sv2::{HandshakeRole, StandardEitherFrame, StandardSv2Frame},
+    codec_sv2::{HandshakeRole, StandardEitherFrame, StandardSv2Frame, Encoder, StandardDecoder},
     common_messages_sv2::{
         Protocol, SetupConnection, SetupConnectionError, SetupConnectionSuccess,
         MESSAGE_TYPE_SETUP_CONNECTION_ERROR, MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
@@ -20,7 +20,7 @@ use stratum_apps::stratum_core::{
     parsers_sv2::{AnyMessage, Mining},
 };
 use stratum_apps::network_helpers::noise_stream::NoiseTcpStream;
-use tokio::{net::TcpStream, time::{timeout_at, Instant}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream, time::{timeout_at, Instant}};
 
 type Message = AnyMessage<'static>;
 type Sv2Frame = StandardSv2Frame<Message>;
@@ -50,6 +50,10 @@ struct Args {
     /// How long to wait for NewMiningJob / SetNewPrevHash after channel open.
     #[arg(long, default_value_t = 0.8)]
     job_wait: f64,
+
+    /// Transport: noise (default) or unencrypted plain SV2 TCP.
+    #[arg(long, default_value = "noise", value_parser = ["noise", "tcp"])]
+    transport: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -173,6 +177,10 @@ async fn run(args: Args) -> ProbeResult {
         Err(_) => return fail(r, "tcp", "timeout", start),
     };
     r.tcp_ok = 1;
+
+    if args.transport == "tcp" {
+        return run_plain_tcp(args, tcp, start, deadline).await;
+    }
 
     let authority_requested = args
         .authority_key
@@ -344,7 +352,7 @@ async fn run(args: Args) -> ProbeResult {
     let job_deadline = Instant::now() + listen;
     let read_deadline = std::cmp::min(job_deadline, deadline);
     while Instant::now() < read_deadline {
-        let mut f = match timeout_at(read_deadline, reader.read_frame()).await {
+        let f = match timeout_at(read_deadline, reader.read_frame()).await {
             Ok(Ok(v)) => match into_sv2_frame(v) {
                 Ok(frame) => frame,
                 Err(_) => break,
@@ -365,4 +373,219 @@ async fn run(args: Args) -> ProbeResult {
     r.alive = 1;
     r.latency_ms = start.elapsed().as_millis() as u64;
     r
+}
+
+/// Run setup/channel over unencrypted standard SV2 framing. This is intentionally
+/// separate from the Noise path: a TCP connect must not be reported as plain-SV2 OK.
+async fn run_plain_tcp(
+    args: Args,
+    mut tcp: TcpStream,
+    start: Instant,
+    deadline: Instant,
+) -> ProbeResult {
+    let mut r = ProbeResult {
+        tcp_ok: 1,
+        ..Default::default()
+    };
+    let mut encoder = Encoder::<Message>::new();
+    let mut decoder = StandardDecoder::<Message>::new();
+
+    async fn write_frame(
+        tcp: &mut TcpStream,
+        encoder: &mut Encoder<Message>,
+        frame: EitherFrame,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        let bytes = encoder
+            .encode(into_sv2_frame(frame)?)
+            .map_err(|e| format!("encode: {e:?}"))?;
+
+        timeout_at(deadline, tcp.write_all(bytes.as_ref()))
+            .await
+            .map_err(|_| "timeout-writing-frame".to_string())?
+            .map_err(|e| e.to_string())
+    }
+
+    async fn read_frame(
+        tcp: &mut TcpStream,
+        decoder: &mut StandardDecoder<Message>,
+        deadline: Instant,
+    ) -> Result<Sv2Frame, String> {
+        loop {
+            match decoder.next_frame() {
+                Ok(frame) => return Ok(frame),
+                Err(_) => {
+                    let buf = decoder.writable();
+                    if buf.is_empty() {
+                        return Err("decoder-buffer-empty".to_string());
+                    }
+                    timeout_at(deadline, tcp.read_exact(buf))
+                        .await
+                        .map_err(|_| "timeout".to_string())?
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+
+    let mut setup = SetupConnection {
+        protocol: Protocol::MiningProtocol,
+        min_version: 2,
+        max_version: 2,
+        flags: 0,
+        endpoint_host: match str255(&args.host) {
+            Ok(v) => v,
+            Err(e) => return fail(r, "tcp_sv2_setup", e, start),
+        },
+        endpoint_port: args.port,
+        vendor: str255("zbx-stratum").unwrap(),
+        hardware_version: str255("probe").unwrap(),
+        firmware: str255(env!("CARGO_PKG_VERSION")).unwrap(),
+        device_id: str255("").unwrap(),
+    };
+    setup.set_requires_standard_job();
+
+    let setup_frame = match message_to_frame(setup.into()) {
+        Ok(v) => v,
+        Err(e) => return fail(r, "tcp_sv2_setup", e, start),
+    };
+    if let Err(e) = write_frame(&mut tcp, &mut encoder, setup_frame, deadline).await {
+        return fail(r, "tcp_sv2_setup", e, start);
+    }
+
+    let mut reply = match read_frame(&mut tcp, &mut decoder, deadline).await {
+        Ok(v) => v,
+        Err(e) => return fail(r, "tcp_sv2_setup", e, start),
+    };
+
+    match reply.get_header().map(|h| h.msg_type()) {
+        Some(MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS) => {
+            match SetupConnectionSuccess::from_bytes(reply.payload()) {
+                Ok(v) => {
+                    r.setup_ok = 1;
+                    r.used_version = v.used_version;
+                    r.setup_flags = v.flags;
+                }
+                Err(e) => return fail(r, "tcp_sv2_setup", format!("decode: {e:?}"), start),
+            }
+        }
+        Some(MESSAGE_TYPE_SETUP_CONNECTION_ERROR) => {
+            match SetupConnectionError::from_bytes(reply.payload()) {
+                Ok(v) => return fail(r, "tcp_sv2_setup", v.error_code.as_utf8_or_hex(), start),
+                Err(e) => return fail(r, "tcp_sv2_setup", format!("decode: {e:?}"), start),
+            }
+        }
+        _ => return fail(r, "tcp_sv2_setup", "unexpected-message", start),
+    }
+
+    let open = OpenStandardMiningChannel {
+        request_id: 1,
+        user_identity: match str255(&args.user) {
+            Ok(v) => v,
+            Err(e) => return fail(r, "tcp_sv2_channel", e, start),
+        },
+        nominal_hash_rate: args.hashrate,
+        max_target: match max_target() {
+            Ok(v) => v,
+            Err(e) => return fail(r, "tcp_sv2_channel", e, start),
+        },
+    };
+
+    let open_frame = match message_to_frame(Message::Mining(
+        Mining::OpenStandardMiningChannel(open),
+    )) {
+        Ok(v) => v,
+        Err(e) => return fail(r, "tcp_sv2_channel", e, start),
+    };
+    if let Err(e) = write_frame(&mut tcp, &mut encoder, open_frame, deadline).await {
+        return fail(r, "tcp_sv2_channel", e, start);
+    }
+
+    while Instant::now() < deadline {
+        let mut f = match read_frame(&mut tcp, &mut decoder, deadline).await {
+            Ok(v) => v,
+            Err(e) => return fail(r, "tcp_sv2_channel", e, start),
+        };
+        let msg_type = match f.get_header() {
+            Some(header) => header.msg_type(),
+            None => return fail(r, "tcp_sv2_channel", "missing-frame-header", start),
+        };
+
+        match msg_type {
+            MESSAGE_TYPE_OPEN_STANDARD_MINING_CHANNEL_SUCCESS => {
+                match OpenStandardMiningChannelSuccess::from_bytes(f.payload()) {
+                    Ok(v) => {
+                        r.channel_ok = 1;
+                        r.channel_id = v.channel_id;
+                        break;
+                    }
+                    Err(e) => return fail(r, "tcp_sv2_channel", format!("decode: {e:?}"), start),
+                }
+            }
+            MESSAGE_TYPE_OPEN_MINING_CHANNEL_ERROR => {
+                match OpenMiningChannelError::from_bytes(f.payload()) {
+                    Ok(v) => return fail(r, "tcp_sv2_channel", v.error_code.as_utf8_or_hex(), start),
+                    Err(e) => return fail(r, "tcp_sv2_channel", format!("open-error-decode: {e:?}"), start),
+                }
+            }
+            MESSAGE_TYPE_NEW_MINING_JOB => r.job_seen = 1,
+            MESSAGE_TYPE_MINING_SET_NEW_PREV_HASH => r.prevhash_seen = 1,
+            _ => {}
+        }
+    }
+
+    if r.channel_ok == 0 {
+        return fail(r, "tcp_sv2_channel", "no-open-channel-success", start);
+    }
+
+    let listen = Duration::from_secs_f64(args.job_wait.max(0.0));
+    let job_deadline = Instant::now() + listen;
+    let read_deadline = std::cmp::min(job_deadline, deadline);
+
+    while Instant::now() < read_deadline {
+        let f = match read_frame(&mut tcp, &mut decoder, read_deadline).await {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        let msg_type = match f.get_header() {
+            Some(header) => header.msg_type(),
+            None => break,
+        };
+
+        match msg_type {
+            MESSAGE_TYPE_NEW_MINING_JOB => r.job_seen = 1,
+            MESSAGE_TYPE_MINING_SET_NEW_PREV_HASH => r.prevhash_seen = 1,
+            _ => {}
+        }
+    }
+
+    r.alive = 1;
+    r.latency_ms = start.elapsed().as_millis() as u64;
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_authority_key, str255};
+
+    #[test]
+    fn accepts_valid_authority_key() {
+        let payload = [1u8, 0u8].into_iter().chain([7u8; 32]).collect::<Vec<_>>();
+        let key = bs58::encode(payload).with_check().into_string();
+        assert_eq!(parse_authority_key(&key).unwrap(), [7u8; 32]);
+    }
+
+    #[test]
+    fn rejects_invalid_authority_key() {
+        let payload = [1u8, 0u8].into_iter().chain([7u8; 31]).collect::<Vec<_>>();
+        let key = bs58::encode(payload).with_check().into_string();
+        assert!(parse_authority_key(&key).is_err());
+        assert!(parse_authority_key("not-a-base58check-key").is_err());
+    }
+
+    #[test]
+    fn enforces_str0255_boundary() {
+        assert!(str255(&"x".repeat(255)).is_ok());
+        assert!(str255(&"x".repeat(256)).is_err());
+    }
 }
