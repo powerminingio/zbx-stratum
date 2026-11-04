@@ -41,8 +41,8 @@ zabbix_export:
           name: "Discover Stratum ports"
           type: EXTERNAL
           key: 'stratum_ports_discovery.py[{$STRATUM.PORTS}]'
-          delay: 1h
-          lifetime: 7d
+          delay: 5m
+          lifetime_type: DELETE_IMMEDIATELY
           description: "Discovers Stratum ports from {$STRATUM.PORTS} macro and creates per-port items/triggers/graphs."
 
           item_prototypes:
