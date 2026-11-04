@@ -15,15 +15,13 @@ def main():
         return
 
     ports = []
-    seen_ports = set()
     for raw_port in ports_arg.split(","):
         port = raw_port.strip()
-        if not re.fullmatch(r"[0-9]{1,5}", port) or not (1 <= int(port) <= 65535):
+
+        if not re.fullmatch(r"[1-9][0-9]{0,4}", port) or int(port) > 65535:
             raise SystemExit(f"Invalid Stratum port {port!r} in {ports_arg!r}")
 
-        port_number = int(port)
-        if port_number not in seen_ports:
-            seen_ports.add(port_number)
+        if port not in ports:
             ports.append(port)
 
     print(json.dumps({"data": [{"{#STRATUM.PORT}": p} for p in ports]}))
